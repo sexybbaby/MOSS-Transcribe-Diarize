@@ -19,6 +19,7 @@
     python register_voiceprint.py --remove 张三
 """
 
+
 import sys
 import json
 import os
