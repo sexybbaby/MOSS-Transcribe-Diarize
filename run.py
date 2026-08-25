@@ -120,18 +120,81 @@ out = generate_transcription(
     device=device, dtype=dtype)
 
 
+# ========== 声纹身份识别 ==========
+VOICEPRINT_DB_PATH = Path(__file__).resolve().parent / "voiceprint_db.json"
+MATCH_THRESHOLD = 0.75  # 余弦相似度低于此值视为未匹配（同人通常 0.85+，同性别相似嗓音约 0.5~0.7）
+MIN_SEG_SEC = 1.0       # 短于此的片段不参与声纹提取（信噪比太低）
+
+
+def identify_speakers(audio_path: str, segments) -> dict:
+    """
+    用声纹数据库把转写出的 S01/S02 标签映射为真实姓名。
+    返回 {标签: 显示名}，未匹配的标签保持原样。
+    """
+    from register_voiceprint import load_db, get_encoder, cosine_similarity
+
+    db = load_db(str(VOICEPRINT_DB_PATH))
+    speakers = db.get("speakers", {})
+    if not speakers:
+        print("\n⚠️ 声纹数据库为空，跳过身份识别（用 register_voiceprint.py 录入后生效）")
+        return {}
+
+    from collections import defaultdict
+    import numpy as np
+    import librosa
+
+    # 按 16kHz 单声道加载，不做静音裁剪，保证时间戳与切片对齐
+    wav, sr = librosa.load(audio_path, sr=16000, mono=True)
+
+    groups = defaultdict(list)
+    for s in segments:
+        if s.end - s.start >= MIN_SEG_SEC:
+            groups[s.speaker].append(wav[int(s.start * sr):int(s.end * sr)])
+
+    encoder = get_encoder()
+    mapping = {}
+    print("\n声纹匹配结果:")
+    for label, chunks in sorted(groups.items()):
+        # 每个片段单独提声纹，按时长加权平均，避免个别时间戳错乱的片段污染整体
+        embs = [encoder.embed_utterance(c) for c in chunks if len(c) >= int(MIN_SEG_SEC * sr)]
+        if not embs:
+            print(f"  {label} -> 未匹配  (可用语音不足 {MIN_SEG_SEC}s)")
+            continue
+        weights = [len(c) for c in chunks if len(c) >= int(MIN_SEG_SEC * sr)]
+        emb = np.average(np.array(embs), axis=0, weights=weights)
+        emb = emb / (np.linalg.norm(emb) + 1e-8)
+
+        sims = {
+            name: max(cosine_similarity(emb, e) for e in info["embeddings"])
+            for name, info in speakers.items()
+        }
+        best_name, best_sim = max(sims.items(), key=lambda kv: kv[1])
+        if best_sim >= MATCH_THRESHOLD:
+            mapping[label] = best_name
+            print(f"  {label} -> {best_name}  (相似度 {best_sim:.3f})")
+        else:
+            print(f"  {label} -> 未匹配  (最高 {best_sim:.3f} 与 {best_name}，低于阈值 {MATCH_THRESHOLD})")
+    return mapping
+
+
 # ========== 输出 ==========
 print("=" * 60)
 print("=== RAW ===")
 print("=" * 60)
 print(out["text"])
 
+segments = parse_transcript(out["text"])
+
+# 身别识别：把 S01/S02 替换为声纹库中的真实姓名
+speaker_map = identify_speakers(audio_path, segments)
+
 print()
 print("=" * 60)
 print("=== PARSED ===")
 print("=" * 60)
-for s in parse_transcript(out["text"]):
-    print(f"[{s.start:.2f}-{s.end:.2f}] {s.speaker}: {s.text}")
+for s in segments:
+    name = speaker_map.get(s.speaker, s.speaker)
+    print(f"[{s.start:.2f}-{s.end:.2f}] {name}: {s.text}")
 
 
 # ========== 耗时统计 ==========
