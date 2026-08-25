@@ -1,5 +1,5 @@
-import sys
 import time
+from pathlib import Path
 import torch
 from transformers import AutoModelForCausalLM, AutoProcessor
 from moss_transcribe_diarize.inference_utils import (
@@ -11,20 +11,37 @@ from moss_transcribe_diarize import parse_transcript
 def parse_args():
     """
     用法:
-        python t.py              # 默认用 GPU
-        python t.py --device gpu # 强制 GPU
-        python t.py --device cpu # 强制 CPU
+        python run.py                        # 默认转写 resource/test003.wav，用 GPU
+        python run.py test001.wav            # 转写 resource/test001.wav
+        python run.py test001.wav --device cpu
+        python run.py D:/xxx/other.wav       # 也可以直接传相对/绝对路径
     """
-    if "--device" in sys.argv:
-        idx = sys.argv.index("--device")
-        if idx + 1 >= len(sys.argv):
-            print("❌ --device 后面需要跟 cpu 或 gpu")
-            exit(1)
-        return sys.argv[idx + 1].lower()
-    return "gpu"  # 默认 gpu
+    import argparse
+    parser = argparse.ArgumentParser(description="MOSS 语音转写")
+    parser.add_argument("audio", nargs="?", default="test003.wav",
+                        help="音频文件名，自动在 resource/ 目录下查找；也可直接传路径")
+    parser.add_argument("--device", choices=["gpu", "cpu"], default="gpu",
+                        help="运行设备，默认 gpu")
+    args = parser.parse_args()
+
+    base = Path(__file__).resolve().parent
+    resource_path = base / "resource" / args.audio
+    if resource_path.is_file():
+        return str(resource_path), args.device
+
+    direct = Path(args.audio)
+    if direct.is_file():
+        return str(direct.resolve()), args.device
+
+    print(f"❌ 找不到音频文件: {args.audio}")
+    print(f"   已查找: {resource_path}")
+    if (base / "resource").is_dir():
+        files = ", ".join(p.name for p in (base / "resource").iterdir() if p.is_file())
+        print(f"   resource/ 下可用文件: {files}")
+    exit(1)
 
 
-requested = parse_args()
+audio_path, requested = parse_args()
 
 # ========== 设备选择 + 校验 ==========
 if requested == "gpu":
@@ -80,7 +97,6 @@ t0 = time.time()
 
 # ========== 模型加载 ==========
 model_id = "OpenMOSS-Team/MOSS-Transcribe-Diarize"
-audio_path = r"D:\work\st\research\MOSS-Transcribe-Diarize\resource\test003.wav"
 
 print("正在加载模型...")
 model = AutoModelForCausalLM.from_pretrained(
