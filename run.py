@@ -34,6 +34,7 @@ def parse_args():
     if direct.is_file():
         return str(direct.resolve()), args.device
 
+
     print(f"❌ 找不到音频文件: {args.audio}")
     print(f"   已查找: {resource_path}")
     if (base / "resource").is_dir():
