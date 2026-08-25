@@ -1,5 +1,10 @@
+import os
 import time
 from pathlib import Path
+
+# 模型已完整缓存在本地，跳过 HF Hub 联网检查（断网可用，加载更快）
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
 import torch
 from transformers import AutoModelForCausalLM, AutoProcessor
 from moss_transcribe_diarize.inference_utils import (
